@@ -1,28 +1,19 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 /* ================= TYPES ================= */
 
 type Tag = {
-  id?: string;
+  id?: number | string;
   name: string;
   data?: string;
   children?: Tag[];
 };
 
-/* ================= INITIAL DATA ================= */
+/* ================= INITIAL ================= */
 
 const initialTree: Tag = {
   name: "root",
-  children: [
-    {
-      name: "child1",
-      children: [
-        { name: "child1-child1", data: "c1-c1 Hello" },
-        { name: "child1-child2", data: "c1-c2 JS" }
-      ]
-    },
-    { name: "child2", data: "c2 World" }
-  ]
+  children: [],
 };
 
 /* ================= UTIL ================= */
@@ -33,7 +24,7 @@ function attachIds(node: Tag): Tag {
   return {
     ...node,
     id: node.id || generateId(),
-    children: node.children?.map(attachIds)
+    children: node.children?.map(attachIds),
   };
 }
 
@@ -41,7 +32,7 @@ function cleanTree(node: Tag): Tag {
   return {
     name: node.name,
     ...(node.data !== undefined && { data: node.data }),
-    ...(node.children && { children: node.children.map(cleanTree) })
+    ...(node.children && { children: node.children.map(cleanTree) }),
   };
 }
 
@@ -57,8 +48,6 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [editingName, setEditingName] = useState(false);
 
-  /* ---------- Handlers ---------- */
-
   const updateChild = (index: number, updatedChild: Tag) => {
     const newChildren = [...(node.children || [])];
     newChildren[index] = updatedChild;
@@ -69,24 +58,22 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
     const newChild: Tag = {
       id: generateId(),
       name: "New Child",
-      data: "Data"
+      data: "Data",
     };
 
     if (node.data !== undefined) {
       updateNode({
         ...node,
         data: undefined,
-        children: [newChild]
+        children: [newChild],
       });
     } else {
       updateNode({
         ...node,
-        children: [...(node.children || []), newChild]
+        children: [...(node.children || []), newChild],
       });
     }
   };
-
-  /* ---------- UI ---------- */
 
   return (
     <div
@@ -94,10 +81,9 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
         marginLeft: depth * 12,
         borderLeft: "1px solid #2a2a2a",
         paddingLeft: 12,
-        marginTop: 10
+        marginTop: 10,
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -106,21 +92,23 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
           background: "#111",
           padding: "6px 10px",
           borderRadius: 8,
-          border: "1px solid #222"
+          border: "1px solid #222",
         }}
       >
         <button onClick={() => setCollapsed(!collapsed)}>
           {collapsed ? ">" : "v"}
         </button>
 
-        {/* Editable Name */}
         {editingName ? (
           <input
             autoFocus
             defaultValue={node.name}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
-                updateNode({ ...node, name: (e.target as HTMLInputElement).value });
+                updateNode({
+                  ...node,
+                  name: (e.target as HTMLInputElement).value,
+                });
                 setEditingName(false);
               }
             }}
@@ -128,7 +116,7 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
               background: "#000",
               color: "#fff",
               border: "1px solid #333",
-              padding: "2px 6px"
+              padding: "2px 6px",
             }}
           />
         ) : (
@@ -148,17 +136,15 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
             padding: "4px 8px",
             borderRadius: 6,
             background: "#1f2937",
-            border: "1px solid #374151"
+            border: "1px solid #374151",
           }}
         >
           + Child
         </button>
       </div>
 
-      {/* Content */}
       {!collapsed && (
         <div style={{ marginTop: 8 }}>
-          {/* Data */}
           {node.data !== undefined && (
             <input
               value={node.data}
@@ -171,12 +157,11 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
                 border: "1px solid #333",
                 padding: 6,
                 borderRadius: 6,
-                marginBottom: 6
+                marginBottom: 6,
               }}
             />
           )}
 
-          {/* Children */}
           {node.children?.map((child, i) => (
             <TagView
               key={child.id || i}
@@ -194,74 +179,192 @@ const TagView: React.FC<Props> = ({ node, updateNode, depth = 0 }) => {
 /* ================= MAIN APP ================= */
 
 const App: React.FC = () => {
-  const [tree, setTree] = useState<Tag>(attachIds(initialTree));
+  const [trees, setTrees] = useState<Tag[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [exported, setExported] = useState("");
-
-  /* ---------- API ---------- */
+  const [toast, setToast] = useState<string | null>(null);
 
   const API_URL = "http://localhost:8000/trees";
 
-  const saveTree = async (data: Tag) => {
+  /* ---------- TOAST ---------- */
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2000);
+  };
+
+  /* ---------- FETCH ---------- */
+
+  const fetchTrees = async () => {
     try {
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data })
-      });
-      return await res.json();
-    } catch (err) {
-      console.error("Save failed", err);
+      const res = await fetch(API_URL);
+      if (!res.ok) throw new Error();
+
+      const data = await res.json();
+
+      if (data.length === 0) {
+        setTrees([attachIds(initialTree)]);
+      } else {
+        setTrees(data.map((t: Tag) => attachIds(t)));
+      }
+
+      setError(null);
+    } catch {
+      setError("Backend not connected");
+      setTrees([attachIds(initialTree)]);
     }
   };
 
-  /* ---------- Export ---------- */
+  useEffect(() => {
+    fetchTrees();
+  }, []);
 
-  const handleExport = async () => {
-    const cleaned = cleanTree(tree);
+  /* ---------- SAVE ---------- */
+
+  const saveTree = async (tree: Tag) => {
+    try {
+      const method = tree.id ? "PUT" : "POST";
+      const url = tree.id ? `${API_URL}/${tree.id}` : API_URL;
+
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cleanTree(tree)),
+      });
+
+      if (!res.ok) throw new Error();
+
+      const data = await res.json();
+      setError(null);
+      showToast("Tree saved successfully");
+      return data;
+    } catch {
+      setError("Backend not connected");
+      showToast("Save failed");
+    }
+  };
+
+  /* ---------- DELETE ALL ---------- */
+
+  const deleteAllTrees = async () => {
+    try {
+      const res = await fetch(API_URL, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+
+      setTrees([attachIds(initialTree)]);
+      setError(null);
+      showToast("All trees deleted");
+    } catch {
+      setError("Backend not connected");
+      showToast("Delete failed");
+    }
+  };
+
+  /* ---------- EXPORT ---------- */
+
+  const handleExport = async (index: number) => {
+    const cleaned = cleanTree(trees[index]);
     const json = JSON.stringify(cleaned, null, 2);
 
     setExported(json);
 
-    await saveTree(cleaned);
+    const saved = await saveTree({
+      ...cleaned,
+      id: typeof trees[index].id === "number" ? trees[index].id : undefined,
+    });
+
+    if (saved?.id) {
+      setTrees((prev) =>
+        prev.map((t, i) =>
+          i === index ? { ...t, id: saved.id } : t
+        )
+      );
+    }
   };
 
   /* ---------- UI ---------- */
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#0b0b0c",
-        color: "#e5e7eb",
-        padding: 30,
-        fontFamily: "Inter, sans-serif"
-      }}
-    >
+    <div style={{ minHeight: "100vh", background: "#0b0b0c", color: "#e5e7eb", padding: 30 }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
-        <h1 style={{ fontSize: 28, marginBottom: 20 }}>
-          Nested Tags Editor
-        </h1>
+        <h1 style={{ fontSize: 28, marginBottom: 20 }}>Nested Tags Editor</h1>
 
-        <TagView node={tree} updateNode={setTree} />
+        {/* Error */}
+        {error && (
+          <div style={{ background: "#7f1d1d", padding: 10, borderRadius: 6, marginBottom: 20 }}>
+            {error}
+          </div>
+        )}
 
-        {/* Actions */}
-        <div style={{ marginTop: 24 }}>
+        {/* Toast */}
+        {toast && (
+          <div style={{ background: "#065f46", padding: 10, borderRadius: 6, marginBottom: 20 }}>
+            {toast}
+          </div>
+        )}
+
+        {/* Buttons */}
+        <div style={{ marginBottom: 20 }}>
           <button
-            onClick={handleExport}
+            onClick={() => {
+              setTrees((prev) => [...prev, attachIds(initialTree)]);
+              showToast("New tree added");
+            }}
             style={{
               padding: "8px 14px",
               borderRadius: 8,
-              background: "#2563eb",
-              border: "none",
+              background: "#16a34a",
               color: "white",
-              fontWeight: 500
+              border: "none",
+              marginRight: 10,
             }}
           >
-            Export & Save
+            + New Tree
+          </button>
+
+          <button
+            onClick={deleteAllTrees}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              background: "#dc2626",
+              color: "white",
+              border: "none",
+            }}
+          >
+            Delete All Trees
           </button>
         </div>
 
-        {/* Output */}
+        {/* Trees */}
+        {trees.map((tree, i) => (
+          <div key={tree.id || i} style={{ marginBottom: 30 }}>
+            <TagView
+              node={tree}
+              updateNode={(updated) => {
+                setTrees((prev) =>
+                  prev.map((t, idx) => (idx === i ? updated : t))
+                );
+              }}
+            />
+
+            <button
+              onClick={() => handleExport(i)}
+              style={{
+                marginTop: 10,
+                padding: "6px 12px",
+                borderRadius: 6,
+                background: "#2563eb",
+                color: "white",
+                border: "none",
+              }}
+            >
+              Export & Save Tree {i + 1}
+            </button>
+          </div>
+        ))}
+
+        {/* JSON Output */}
         {exported && (
           <pre
             style={{
@@ -271,7 +374,7 @@ const App: React.FC = () => {
               borderRadius: 8,
               border: "1px solid #1e293b",
               fontSize: 12,
-              overflow: "auto"
+              overflow: "auto",
             }}
           >
             {exported}
