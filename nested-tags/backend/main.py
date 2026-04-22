@@ -3,12 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 from sqlalchemy.dialects.postgresql import JSONB
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing import List, Optional
 
 # ================= DATABASE ================= #
 
-DATABASE_URL = "postgresql://postgres:password@localhost:5432/nested_tags"
+DATABASE_URL = "postgresql://postgres:kali@localhost:5432/nested_tags"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
@@ -24,7 +24,6 @@ class Tree(Base):
     data = Column(JSONB, nullable=False)
 
 
-# Create table
 Base.metadata.create_all(bind=engine)
 
 
@@ -35,28 +34,43 @@ class Tag(BaseModel):
     data: Optional[str] = None
     children: Optional[List["Tag"]] = None
 
+    # 🔥 VALIDATION (VERY IMPORTANT)
+    @model_validator(mode="after")
+    def validate_node(self):
+        if self.data is not None and self.children is not None:
+            raise ValueError("Node cannot have both data and children")
+        if self.data is None and self.children is None:
+            raise ValueError("Node must have either data or children")
+        return self
+
+
 Tag.model_rebuild()
 
 
-class TreeCreate(BaseModel):
-    data: Tag
+# Accept RAW tree (not wrapped in "data")
+class TreeCreate(Tag):
+    pass
 
 
 class TreeResponse(BaseModel):
     id: int
-    data: Tag
+    name: str
+    data: Optional[str] = None
+    children: Optional[List[Tag]] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+TreeResponse.model_rebuild()
 
 
 # ================= APP ================= #
 
 app = FastAPI()
 
-# CORS (allow frontend)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,23 +89,36 @@ def get_db():
 
 # ================= ROUTES ================= #
 
-# GET all trees
+# ✅ GET all trees
 @app.get("/trees", response_model=List[TreeResponse])
 def get_trees(db: Session = Depends(get_db)):
-    return db.query(Tree).all()
+    trees = db.query(Tree).all()
+
+    return [
+        {
+            "id": t.id,
+            **t.data
+        }
+        for t in trees
+    ]
 
 
-# CREATE new tree
+# ✅ CREATE tree
 @app.post("/trees", response_model=TreeResponse)
 def create_tree(tree: TreeCreate, db: Session = Depends(get_db)):
-    db_tree = Tree(data=tree.data.model_dump())
+    db_tree = Tree(data=tree.model_dump())
+
     db.add(db_tree)
     db.commit()
     db.refresh(db_tree)
-    return db_tree
+
+    return {
+        "id": db_tree.id,
+        **db_tree.data
+    }
 
 
-# UPDATE existing tree
+# ✅ UPDATE tree
 @app.put("/trees/{tree_id}", response_model=TreeResponse)
 def update_tree(tree_id: int, tree: TreeCreate, db: Session = Depends(get_db)):
     db_tree = db.query(Tree).filter(Tree.id == tree_id).first()
@@ -99,8 +126,24 @@ def update_tree(tree_id: int, tree: TreeCreate, db: Session = Depends(get_db)):
     if not db_tree:
         raise HTTPException(status_code=404, detail="Tree not found")
 
-    db_tree.data = tree.data.model_dump()
+    db_tree.data = tree.model_dump()
+
     db.commit()
     db.refresh(db_tree)
 
-    return db_tree
+    return {
+        "id": db_tree.id,
+        **db_tree.data
+    }
+
+# ✅ DELETE tree
+@app.delete("/trees")
+def delete_all_trees(db: Session = Depends(get_db)):
+    db.query(Tree).delete()
+    db.commit()
+    return {"message": "All trees deleted"}
+
+# ✅ HEALTH CHECK (useful for frontend error handling)
+@app.get("/health")
+def health():
+    return {"status": "ok"}
